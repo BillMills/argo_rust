@@ -3,6 +3,7 @@ use netcdf;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::error::Error;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GeojsonPoint {
@@ -121,19 +122,76 @@ fn main() -> Result<(), Box<dyn Error>> {
     let POSITIONING_SYSTEM: String = unpack_string("POSITIONING_SYSTEM", STRING8, [..1, ..8].into(), &file);
     let VERTICAL_SAMPLING_SCHEME: String = unpack_string("VERTICAL_SAMPLING_SCHEME", STRING256, [..1, ..256].into(), &file);
     let CONFIG_MISSION_NUMBER: i32 = file.variable("CONFIG_MISSION_NUMBER").expect("Could not find variable 'CONFIG_MISSION_NUMBER'").get_value([pindex])?;
-    let profile_param_qc: Vec<String> = STATION_PARAMETERS.iter()
-        .map(|param| unpack_string(&format!("PROFILE_{}_QC", param), STRING1, [..1].into(), &file))
-        .collect(); // tbd what to do with this
-    // Unpack float-valued variables
-    let mut profile_data: Vec<Vec<f64>> = Vec::new();
-    for param in &STATION_PARAMETERS {
-        let variable_name = format!("{}", param);
-        let variable = file.variable(&variable_name).expect(&format!("Could not find variable '{}'", variable_name));
-        let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
-        println ! ("{}: {:?}", variable_name, data);
-        // let reshaped_data: Vec<Vec<f64>> = data.chunks(N_LEVELS).map(|chunk| chunk.to_vec()).collect();
-        // profile_data.push(reshaped_data);
-    }
+    
+    // fiddling with templated unpacking, tbd how to consume this downstream
+    // could also turn all these into functions
+    let profile_param_qc: HashMap<String, String> = STATION_PARAMETERS.iter()
+        .map(|param| {
+            let qc_variable_name = format!("PROFILE_{}_QC", param);
+            let qc_value = unpack_string(&qc_variable_name, STRING1, [..1].into(), &file);
+            Ok((param.clone(), qc_value))
+        })
+        .collect::<Result<_, Box<dyn Error>>>()?; // tbd what to do with this
+
+    let profile_data: HashMap<String, Vec<f64>> = STATION_PARAMETERS.iter()
+        .map(|param| {
+            let variable = file.variable(&param).expect(&format!("Could not find variable '{}'", param));
+            let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
+            Ok((param.clone(), data))
+        })
+        .collect::<Result<_, Box<dyn Error>>>()?;
+
+    let level_qc: HashMap<String, Vec<String>> = STATION_PARAMETERS.iter()
+        .map(|param| {
+            let qc_variable_name = format!("{}_QC", param);
+            let qc_vec = unpack_string_array(&qc_variable_name, STRING1, N_LEVELS, [..1, ..N_LEVELS].into(), &file);
+            Ok((param.clone(), qc_vec))
+        })
+        .collect::<Result<_, Box<dyn Error>>>()?;
+
+    // need to think about when adjusted data is present
+    let adjusted_data: HashMap<String, Vec<f64>> = STATION_PARAMETERS.iter()
+        .map(|param| {
+            let adjusted_variable_name = format!("{}_ADJUSTED", param);
+            let variable = file.variable(&adjusted_variable_name).expect(&format!("Could not find variable '{}'", adjusted_variable_name));
+            let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
+            Ok((param.clone(), data))
+        })
+        .collect::<Result<_, Box<dyn Error>>>()?;
+
+    let adjusted_level_qc: HashMap<String, Vec<String>> = STATION_PARAMETERS.iter()
+        .map(|param| {
+            let qc_variable_name = format!("{}_ADJUSTED_QC", param);
+            let qc_vec = unpack_string_array(&qc_variable_name, STRING1, N_LEVELS, [..1, ..N_LEVELS].into(), &file);
+            Ok((param.clone(), qc_vec))
+        })
+        .collect::<Result<_, Box<dyn Error>>>()?;
+    
+    let adjusted_error: HashMap<String, Vec<f64>> = STATION_PARAMETERS.iter()
+        .map(|param| {
+            let adjusted_variable_name = format!("{}_ADJUSTED_ERROR", param);
+            let variable = file.variable(&adjusted_variable_name).expect(&format!("Could not find variable '{}'", adjusted_variable_name));
+            let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
+            Ok((param.clone(), data))
+        })
+        .collect::<Result<_, Box<dyn Error>>>()?;
+
+    //let PRES = file.variable("PRES").expect("Could not find variable 'PRES'").attribute_value("long_name").unwrap()?;
+    // fn extract_variable_attributes(file: &netcdf::File, station_parameters: &[String]) -> Result<HashMap<String, (String, String)>, Box<dyn Error>> {
+    //     let mut variable_attributes: HashMap<String, (String, String)> = HashMap::new();
+
+    //     for param in station_parameters {
+    //         let variable = file.variable(param).ok_or_else(|| format!("Could not find variable '{}'", param))?;
+    //         let units = variable.attribute_value("units").ok_or_else(|| format!("Could not find attribute 'units' for variable '{}'", param))?;
+    //         let long_name = variable.attribute_value("long_name").ok_or_else(|| format!("Could not find attribute 'long_name' for variable '{}'", param))?;
+    //         variable_attributes.insert(param.clone(), (String::from(units?), String::from(long_name?) ));
+    //     }
+
+    //     Ok(variable_attributes)
+    // }
+    // let xx = extract_variable_attributes(&file, &STATION_PARAMETERS)?;
+    // println!("{:?}", xx);
+
 
     // Process the NetCDF variables and convert to JSON
     let data_object = serde_json::to_value(DataSchema {
