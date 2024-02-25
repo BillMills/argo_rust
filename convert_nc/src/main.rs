@@ -121,6 +121,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     let POSITIONING_SYSTEM: String = unpack_string("POSITIONING_SYSTEM", STRING8, [..1, ..8].into(), &file);
     let VERTICAL_SAMPLING_SCHEME: String = unpack_string("VERTICAL_SAMPLING_SCHEME", STRING256, [..1, ..256].into(), &file);
     let CONFIG_MISSION_NUMBER: i32 = file.variable("CONFIG_MISSION_NUMBER").expect("Could not find variable 'CONFIG_MISSION_NUMBER'").get_value([pindex])?;
+    let profile_param_qc: Vec<String> = STATION_PARAMETERS.iter()
+        .map(|param| unpack_string(&format!("PROFILE_{}_QC", param), STRING1, [..1].into(), &file))
+        .collect(); // tbd what to do with this
+    // Unpack float-valued variables
+    let mut profile_data: Vec<Vec<f64>> = Vec::new();
+    for param in &STATION_PARAMETERS {
+        let variable_name = format!("{}", param);
+        let variable = file.variable(&variable_name).expect(&format!("Could not find variable '{}'", variable_name));
+        let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
+        println ! ("{}: {:?}", variable_name, data);
+        // let reshaped_data: Vec<Vec<f64>> = data.chunks(N_LEVELS).map(|chunk| chunk.to_vec()).collect();
+        // profile_data.push(reshaped_data);
+    }
 
     // Process the NetCDF variables and convert to JSON
     let data_object = serde_json::to_value(DataSchema {
