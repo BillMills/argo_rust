@@ -2,15 +2,10 @@
 use netcdf;
 use tokio;
 use std::error::Error;
-use chrono::Utc;
-use chrono::TimeZone;
-use chrono::Duration;
 use std::env;
 use mongodb::bson::{doc};
-use mongodb::bson::DateTime;
 use mongodb::{Client, options::{ClientOptions, ResolverConfig}};
 use serde::{Deserialize, Serialize};
-use mongodb::bson::Bson;
 use std::collections::HashMap;
 use std::fs;
 
@@ -53,21 +48,6 @@ fn split_string(input: String, separator: char) -> Vec<String> {
     input.split(separator).map(|s| s.trim().to_string()).collect()
 }
 
-fn extract_variable_attributes(file: &netcdf::File, station_parameters: &[String]) -> Result<HashMap<String, (String, String)>, Box<dyn Error>> {
-    let mut variable_attributes: HashMap<String, (String, String)> = HashMap::new();
-    for param in station_parameters {
-        let variable = file.variable(param).ok_or_else(|| format!("Could not find variable '{}'", param))?;
-        let units = variable.attribute_value("units").unwrap()?;
-        let long_name = variable.attribute_value("long_name").unwrap()?;
-        if let netcdf::AttributeValue::Str(u) = units {
-            if let netcdf::AttributeValue::Str(l) = long_name {
-                variable_attributes.insert(param.clone(), (u.to_string(), l.to_string()));
-            }
-        }
-    }
-    Ok(variable_attributes)
-}
-
 ////////////////////////////////////////////////////////////////
 
 #[tokio::main]
@@ -97,6 +77,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     } 
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
+    struct DataInfo {
+        DATA_MODE: String,
+        UNITS: String,
+        LONG_NAME: String,
+        PROFILE_PARAMETER_QC: String,
+    } 
+
+    #[derive(Serialize, Deserialize, Debug, Clone)]
     struct DataSchema {
         _id: String,
         geolocation: GeoJSONPoint,
@@ -115,6 +103,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         CONFIG_MISSION_NUMBER: i32,
         realtime_data: Option<HashMap<String, Vec<f64>>>,
         adjusted_data: Option<HashMap<String, Vec<f64>>>,
+        data_info: Option<HashMap<String, DataInfo>>,
+        level_qc: Option<HashMap<String, Vec<String>>>,
+        adjusted_level_qc: Option<HashMap<String, Vec<String>>>,
     }
 
     #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -138,11 +129,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // data unpacking /////////////////////////////////////////////
 
     let mut file_names: Vec<String> = Vec::new();
-    if let Ok(entries) = fs::read_dir("data/ifremer/2901237/profiles") {
+    if let Ok(entries) = fs::read_dir("data/ifremer/4903274/profiles") {
         for entry in entries {
             if let Ok(entry) = entry {
                 if let Some(file_name) = entry.file_name().to_str() {
-                    let file_path = format!("data/ifremer/2901237/profiles/{}", file_name);
+                    let file_path = format!("data/ifremer/4903274/profiles/{}", file_name);
                     file_names.push(file_path);
                 }
             }
@@ -153,8 +144,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     for file_name in file_names {
         println!("Processing file: {}", file_name);
+        let id = file_name
+            .rsplit('/')
+            .next()
+            .and_then(|name| name.strip_suffix(".nc"))
+            .unwrap_or("");
         let file = netcdf::open(&file_name)?;
-        let pindex = 0; // just use the first profile for now
         let pindex = 0; // just use the first profile for now
         let STRING1: usize = 1;
         let STRING2: usize = 2;
@@ -169,7 +164,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let N_PARAM: usize = file.dimension("N_PARAM").unwrap().len();
         let N_LEVELS: usize = file.dimension("N_LEVELS").unwrap().len();
         let N_CALIB: usize = file.dimension("N_CALIB").unwrap().len();
-        let N_HISTORY: usize = file.dimension("N_HISTORY").unwrap().len();
+        //let N_HISTORY: usize = file.dimension("N_HISTORY").unwrap().len();
     
         let DATA_TYPE: String = unpack_string("DATA_TYPE", STRING16, [..16].into(), &file);
         let FORMAT_VERSION: String = unpack_string("FORMAT_VERSION", STRING4, [..4].into(), &file);
@@ -180,7 +175,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let PLATFORM_NUMBER: String = unpack_string("PLATFORM_NUMBER", STRING8, [..1, ..8].into(), &file); // encoded as metadata _id
         let PROJECT_NAME: String = unpack_string("PROJECT_NAME", STRING64, [..1, ..64].into(), &file);
         let PI_NAME: String = unpack_string("PI_NAME", STRING64, [..1, ..64].into(), &file);
-        let STATION_PARAMETERS: Vec<String> = unpack_string_array("STATION_PARAMETERS", STRING16, N_PARAM, [..1, ..N_PARAM, ..16].into(), &file); // encoded in data_info[0]
+        let namesize: usize = file.variable("STATION_PARAMETERS").unwrap().dimensions()[2].len();
+        let STATION_PARAMETERS: Vec<String> = unpack_string_array("STATION_PARAMETERS", if namesize == 64 { STRING64 } else { STRING16 }, N_PARAM, [..1, ..N_PARAM, ..namesize].into(), &file); // encoded in data_info[0]
         let CYCLE_NUMBER: i32 = file.variable("CYCLE_NUMBER").map(|var| var.get_value([pindex]).unwrap_or(99999)).unwrap_or(99999);
         let DIRECTION: String = unpack_string("DIRECTION", STRING1, [..1].into(), &file);
         let DATA_CENTRE: String = unpack_string("DATA_CENTRE", STRING2, [..1, ..2].into(), &file);
@@ -201,68 +197,105 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let VERTICAL_SAMPLING_SCHEME: String = unpack_string("VERTICAL_SAMPLING_SCHEME", STRING256, [..1, ..256].into(), &file);
         let CONFIG_MISSION_NUMBER: i32 = file.variable("CONFIG_MISSION_NUMBER").map(|var| var.get_value([pindex]).unwrap_or(99999)).unwrap_or(99999);
 
+        let PARAMETER_DATA_MODE: Vec<String> = if let Some(variable) = file.variable("PARAMETER_DATA_MODE") {
+            unpack_string_array("PARAMETER_DATA_MODE", STRING1, N_PARAM, [..1, ..N_PARAM].into(), &file)
+        } else {
+            vec![DATA_MODE.clone(); STATION_PARAMETERS.len()]
+        };
+
         // fiddling with templated unpacking, tbd how to consume this downstream
         // could also turn all these into functions
-        let realtime_data: Option<HashMap<String, Vec<f64>>> = if DATA_MODE == "R" {
-            Some(STATION_PARAMETERS.iter()
+
+        let realtime_data: Option<HashMap<String, Vec<f64>>> = STATION_PARAMETERS.iter()
             .map(|param| {
-                let variable = file.variable(&param).expect(&format!("Could not find variable '{}'", param));
+                let variable = file.variable(param).expect(&format!("Could not find variable '{}'", param));
                 let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
                 Ok((param.clone(), data))
             })
-            .collect::<Result<_, Box<dyn Error>>>()?)
-        } else {
-            None
-        };
+            .collect::<Result<_, Box<dyn Error>>>()
+            .map(Some)
+            .unwrap_or(None);
     
-        let adjusted_data: Option<HashMap<String, Vec<f64>>> = if DATA_MODE == "R" {
-            None
-        } else {
-            Some(STATION_PARAMETERS.iter()
-                .map(|param| {
+        let adjusted_data: Option<HashMap<String, Vec<f64>>> = STATION_PARAMETERS.iter()
+            .enumerate()
+            .map(|(i, param)| {
+                let data_mode = PARAMETER_DATA_MODE.get(i).cloned().unwrap_or(DATA_MODE.clone());
+                if data_mode == "R" || param == "NB_SAMPLE_CTD" {
+                    Ok((param.clone(), vec![]))
+                } else {
                     let adjusted_variable_name = format!("{}_ADJUSTED", param);
                     let variable = file.variable(&adjusted_variable_name).expect(&format!("Could not find variable '{}'", adjusted_variable_name));
                     let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
-                    Ok((param.clone(), data))
-                })
-                .collect::<Result<_, Box<dyn Error>>>()?)
-        };
-    
-        let profile_param_qc: HashMap<String, String> = STATION_PARAMETERS.iter()
-            .map(|param| {
+                    Ok((param.clone(), data))                    
+                }
+            })
+            .collect::<Result<_, Box<dyn Error>>>()
+            .map(Some)
+            .unwrap_or(None);
+
+        let data_info: Option<HashMap<String, DataInfo>> = STATION_PARAMETERS.iter()
+            .enumerate()
+            .map(|(i, param)| {
+                let data_mode = PARAMETER_DATA_MODE.get(i).cloned().unwrap_or(DATA_MODE.clone());
+                let variable = file.variable(&param).expect(&format!("Could not find variable '{}'", param));
+                let units = variable.attribute_value("units").unwrap()?;
+                let long_name = variable.attribute_value("long_name").unwrap()?;
                 let qc_variable_name = format!("PROFILE_{}_QC", param);
                 let qc_value = unpack_string(&qc_variable_name, STRING1, [..1].into(), &file);
-                Ok((param.clone(), qc_value))
+                if let netcdf::AttributeValue::Str(u) = units {
+                    if let netcdf::AttributeValue::Str(l) = long_name {
+                        Ok((param.clone(), DataInfo {
+                            DATA_MODE: data_mode,
+                            UNITS: u.to_string(),
+                            LONG_NAME: l.to_string(),
+                            PROFILE_PARAMETER_QC: qc_value,
+                        }))
+                    } else {
+                        Err("Could not extract long_name attribute".into())
+                    }
+                } else {
+                    Err("Could not extract units attribute".into())
+                }
             })
-            .collect::<Result<_, Box<dyn Error>>>()?; // tbd what to do with this
+            .collect::<Result<_, Box<dyn Error>>>()
+            .map(Some)
+            .unwrap_or(None);
     
-        let level_qc: HashMap<String, Vec<String>> = STATION_PARAMETERS.iter()
+        let level_qc: Option<HashMap<String, Vec<String>>> = STATION_PARAMETERS.iter()
             .map(|param| {
                 let qc_variable_name = format!("{}_QC", param);
                 let qc_vec = unpack_string_array(&qc_variable_name, STRING1, N_LEVELS, [..1, ..N_LEVELS].into(), &file);
                 Ok((param.clone(), qc_vec))
             })
-            .collect::<Result<_, Box<dyn Error>>>()?;
-    
-        let adjusted_level_qc: HashMap<String, Vec<String>> = STATION_PARAMETERS.iter()
-            .map(|param| {
-                let qc_variable_name = format!("{}_ADJUSTED_QC", param);
-                let qc_vec = unpack_string_array(&qc_variable_name, STRING1, N_LEVELS, [..1, ..N_LEVELS].into(), &file);
-                Ok((param.clone(), qc_vec))
+            .collect::<Result<_, Box<dyn Error>>>()
+            .map(Some)
+            .unwrap_or(None);
+            
+        let adjusted_level_qc: Option<HashMap<String, Vec<String>>> = STATION_PARAMETERS.iter()
+            .enumerate()
+            .map(|(i, param)| {
+                let data_mode = PARAMETER_DATA_MODE.get(i).cloned().unwrap_or(DATA_MODE.clone());
+                if data_mode == "R" || param == "NB_SAMPLE_CTD" {
+                    Ok((param.clone(), vec![]))
+                } else {
+                    let qc_variable_name = format!("{}_ADJUSTED_QC", param);
+                    let qc_vec = unpack_string_array(&qc_variable_name, STRING1, N_LEVELS, [..1, ..N_LEVELS].into(), &file);
+                    Ok((param.clone(), qc_vec))
+                }
             })
-            .collect::<Result<_, Box<dyn Error>>>()?;
+            .collect::<Result<_, Box<dyn Error>>>()
+            .map(Some)
+            .unwrap_or(None);
+            
+        // let adjusted_level_error: HashMap<String, Vec<f64>> = STATION_PARAMETERS.iter()
+        //     .map(|param| {
+        //         let adjusted_variable_name = format!("{}_ADJUSTED_ERROR", param);
+        //         let variable = file.variable(&adjusted_variable_name).expect(&format!("Could not find variable '{}'", adjusted_variable_name));
+        //         let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
+        //         Ok((param.clone(), data))
+        //     })
+        //     .collect::<Result<_, Box<dyn Error>>>()?;
         
-        let adjusted_level_error: HashMap<String, Vec<f64>> = STATION_PARAMETERS.iter()
-            .map(|param| {
-                let adjusted_variable_name = format!("{}_ADJUSTED_ERROR", param);
-                let variable = file.variable(&adjusted_variable_name).expect(&format!("Could not find variable '{}'", adjusted_variable_name));
-                let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
-                Ok((param.clone(), data))
-            })
-            .collect::<Result<_, Box<dyn Error>>>()?;
-    
-        let variable_metadata = extract_variable_attributes(&file, &STATION_PARAMETERS)?;
-    
         // construct the structs for this file ///////////////////////////////
     
         let mut meta_object = MetaSchema {
@@ -314,7 +347,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
 
         let data_object = DataSchema {
-            _id: format!("{}_{}", PLATFORM_NUMBER, CYCLE_NUMBER),
+            _id: id.to_string(),
             geolocation: GeoJSONPoint {
                 location_type: "Point".to_string(),
                 coordinates: [LONGITUDE, LATITUDE],
@@ -334,11 +367,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
             CONFIG_MISSION_NUMBER: CONFIG_MISSION_NUMBER,
             realtime_data: realtime_data,
             adjusted_data: adjusted_data,
+            data_info: data_info,
+            level_qc: level_qc,
+            adjusted_level_qc: adjusted_level_qc,
         };
     
         argo.insert_one(data_object, None).await?;
-        
     }
     
     Ok(())
 }
+
+
