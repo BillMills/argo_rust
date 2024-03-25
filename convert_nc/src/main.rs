@@ -53,6 +53,12 @@ fn split_string(input: String, separator: char) -> Vec<String> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    
+    // Read the command line argument as data_directory
+    let data_directory = std::env::args().nth(1).expect("Missing data directory argument");}
+
     // mongodb setup ///////////////////////////////////////////
     // Load the MongoDB connection string from an environment variable:
     let client_uri =
@@ -129,11 +135,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // data unpacking /////////////////////////////////////////////
 
     let mut file_names: Vec<String> = Vec::new();
-    if let Ok(entries) = fs::read_dir("data/ifremer/4903274/profiles") {
+    if let Ok(entries) = fs::read_dir(data_directory) {
         for entry in entries {
             if let Ok(entry) = entry {
                 if let Some(file_name) = entry.file_name().to_str() {
-                    let file_path = format!("data/ifremer/4903274/profiles/{}", file_name);
+                    let file_path = format!("{}/{}", data_directory, file_name);
                     file_names.push(file_path);
                 }
             }
