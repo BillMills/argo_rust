@@ -52,12 +52,9 @@ fn split_string(input: String, separator: char) -> Vec<String> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
     
     // Read the command line argument as data_directory
-    let data_directory = std::env::args().nth(1).expect("Missing data directory argument");}
+    let data_directory = std::env::args().nth(1).expect("Missing data directory argument");
 
     // mongodb setup ///////////////////////////////////////////
     // Load the MongoDB connection string from an environment variable:
