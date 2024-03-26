@@ -310,7 +310,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             PROJECT_NAME: PROJECT_NAME,
             PI_NAME: split_string(PI_NAME, ','),
             DATA_CENTRE: DATA_CENTRE,
-            DC_REFERENCE: DC_REFERENCE,
             PLATFORM_TYPE: PLATFORM_TYPE,
             FLOAT_SERIAL_NO: FLOAT_SERIAL_NO,
             FIRMWARE_VERSION: FIRMWARE_VERSION,
@@ -328,7 +327,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 && meta_doc.PROJECT_NAME == meta_object.PROJECT_NAME
                 && meta_doc.PI_NAME == meta_object.PI_NAME
                 && meta_doc.DATA_CENTRE == meta_object.DATA_CENTRE
-                && meta_doc.DC_REFERENCE == meta_object.DC_REFERENCE
                 && meta_doc.PLATFORM_TYPE == meta_object.PLATFORM_TYPE
                 && meta_doc.FLOAT_SERIAL_NO == meta_object.FLOAT_SERIAL_NO
                 && meta_doc.FIRMWARE_VERSION == meta_object.FIRMWARE_VERSION
@@ -362,6 +360,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             DATA_MODE: DATA_MODE,
             DATE_CREATION: DATE_CREATION,
             DATE_UPDATE: DATE_UPDATE,
+            DC_REFERENCE: DC_REFERENCE,
             JULD: JULD,
             JULD_QC: JULD_QC,
             JULD_LOCATION: JULD_LOCATION,
