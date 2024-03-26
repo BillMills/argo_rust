@@ -179,7 +179,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let PROJECT_NAME: String = unpack_string("PROJECT_NAME", STRING64, [..1, ..64].into(), &file);
         let PI_NAME: String = unpack_string("PI_NAME", STRING64, [..1, ..64].into(), &file);
         let namesize: usize = file.variable("STATION_PARAMETERS").unwrap().dimensions()[2].len();
-        let STATION_PARAMETERS: Vec<String> = unpack_string_array("STATION_PARAMETERS", if namesize == 64 { STRING64 } else { STRING16 }, N_PARAM, [..1, ..N_PARAM, ..namesize].into(), &file); // encoded in data_info[0]
+        let STATION_PARAMETERS: Vec<String> = unpack_string_array(
+            "STATION_PARAMETERS",
+            match namesize {
+                1 => STRING1,
+                2 => STRING2,
+                4 => STRING4,
+                8 => STRING8,
+                16 => STRING16,
+                32 => STRING32,
+                64 => STRING64,
+                256 => STRING256,
+                _ => panic!("Unsupported namesize: {}", namesize),
+            },
+            N_PARAM,
+            [..1, ..N_PARAM, ..namesize].into(),
+            &file,
+        ); // encoded in data_info[0]
         let CYCLE_NUMBER: i32 = file.variable("CYCLE_NUMBER").map(|var| var.get_value([pindex]).unwrap_or(99999)).unwrap_or(99999);
         let DIRECTION: String = unpack_string("DIRECTION", STRING1, [..1].into(), &file);
         let DATA_CENTRE: String = unpack_string("DATA_CENTRE", STRING2, [..1, ..2].into(), &file);
