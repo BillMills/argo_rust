@@ -35,7 +35,7 @@ fn unpack_string_array(name: &str, buflen: usize, arraydim: usize, extents: netc
                 .chunks_exact(buflen)
                 .map(|chunk| {
                     let string: String = String::from_utf8_lossy(chunk).into_owned().parse().unwrap_or_default();
-                    string.trim().to_string() // Strip leading and trailing whitespace
+                    string.trim().to_string(); // Strip leading and trailing whitespace
                     trim_null_bytes(string)
                 })
                 .collect();
