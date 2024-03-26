@@ -121,7 +121,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         PROJECT_NAME: String,   
         PI_NAME: Vec<String>,
         DATA_CENTRE: String,
-        DC_REFERENCE: String,
         PLATFORM_TYPE: String,
         FLOAT_SERIAL_NO: String,
         FIRMWARE_VERSION: String,
