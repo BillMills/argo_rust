@@ -36,6 +36,7 @@ fn unpack_string_array(name: &str, buflen: usize, arraydim: usize, extents: netc
                 .map(|chunk| {
                     let string: String = String::from_utf8_lossy(chunk).into_owned().parse().unwrap_or_default();
                     string.trim().to_string() // Strip leading and trailing whitespace
+                    trim_null_bytes(string)
                 })
                 .collect();
             return strings;
@@ -221,7 +222,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         } else {
             vec![DATA_MODE.clone(); STATION_PARAMETERS.len()]
         };
-
+        
         // fiddling with templated unpacking, tbd how to consume this downstream
         // could also turn all these into functions
 
