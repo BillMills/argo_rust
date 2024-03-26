@@ -98,6 +98,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         DATA_MODE: String,
         DATE_CREATION: String,
         DATE_UPDATE: String,
+        DC_REFERENCE: String,
         JULD: f64,
         JULD_QC: String,
         JULD_LOCATION: f64,
