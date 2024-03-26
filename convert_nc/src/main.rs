@@ -132,7 +132,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // data unpacking /////////////////////////////////////////////
 
     let mut file_names: Vec<String> = Vec::new();
-    if let Ok(entries) = fs::read_dir(data_directory) {
+    if let Ok(entries) = fs::read_dir(data_directory.clone()) {
         for entry in entries {
             if let Ok(entry) = entry {
                 if let Some(file_name) = entry.file_name().to_str() {
