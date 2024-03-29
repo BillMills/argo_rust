@@ -7,13 +7,17 @@ use std::env;
 use std::collections::HashMap;
 use mongodb::bson::{self, Bson, Document};
 use mongodb::options::FindOptions;
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
+
+static CLIENT: Lazy<Mutex<Option<mongodb::Client>>> = Lazy::new(|| Mutex::new(None));
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct GeoJSONPoint {
     #[serde(rename = "type")]
     location_type: String,
     coordinates: [f64; 2],
-}
+} 
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct DataInfo {
@@ -21,7 +25,7 @@ struct DataInfo {
     UNITS: String,
     LONG_NAME: String,
     PROFILE_PARAMETER_QC: String,
-}
+} 
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct DataSchema {
@@ -60,12 +64,6 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
     let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
     let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
 
-    // Connect to MongoDB
-    let client_options = ClientOptions::parse(env::var("MONGODB_URI").unwrap()).await.unwrap();
-    let client = Client::with_options(client_options).unwrap();
-    let db = client.database("argo");
-    let collection = db.collection::<DataSchema>("argo");
-
     // Build the filter based on the provided parameters
     let mut filter = mongodb::bson::doc! {};
 
@@ -87,8 +85,13 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
     }
 
     // Search for documents with matching filters
-    let mut options = FindOptions::default();
-    let mut cursor = collection.find(filter, options).await.unwrap();
+    let mut cursor = {
+        let guard = CLIENT.lock().unwrap();
+        let client = guard.as_ref().unwrap();
+        let mut options = FindOptions::default();
+        client.database("argo").collection::<DataSchema>("argo").find(filter, options).await.unwrap()
+    }; // in theory the mutex is unlocked here, holding it as little as possible
+    
     let mut results = Vec::new();
 
     while let Some(result) = cursor.next().await {
@@ -108,6 +111,14 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+
+    // Initialize the MongoDB client
+    let client_options = mongodb::options::ClientOptions::parse(env::var("MONGODB_URI").unwrap()).await.unwrap();
+    let client = mongodb::Client::with_options(client_options).unwrap();
+
+    // Store the client in the static variable
+    *CLIENT.lock().unwrap() = Some(client);
+
     HttpServer::new(|| {
         App::new()
             .service(get_query_params)
@@ -117,3 +128,4 @@ async fn main() -> std::io::Result<()> {
     .run()
     .await
 }
+
