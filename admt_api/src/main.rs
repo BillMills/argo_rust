@@ -1,37 +1,96 @@
-use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
-use mongodb::{bson::doc, options::FindOptions, Client};
+use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use serde::{Serialize, Deserialize};
+use serde_json::json;
+use mongodb::{Client, options::ClientOptions};
+use futures::stream::StreamExt;
+use std::env;
+use std::collections::HashMap;
+use bson::doc;
 
-#[get("/argo")]
-async fn get_argo_documents(data: web::Data<Client>, web::Query(query): web::Query<QueryParams>) -> impl Responder {
-    let collection = data.database("argo").collection("argoX");
-
-    let filter = doc! { "_id": query.id };
-    let options = FindOptions::default();
-
-    match collection.find(filter, options).await {
-        Ok(cursor) => {
-            let documents: Vec<_> = cursor.map(|doc| doc.unwrap()).collect();
-            HttpResponse::Ok().json(documents)
-        }
-        Err(_) => HttpResponse::InternalServerError().finish(),
-    }
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct GeoJSONPoint {
+    #[serde(rename = "type")]
+    location_type: String,
+    coordinates: [f64; 2],
 }
 
-#[derive(serde::Deserialize)]
-struct QueryParams {
-    id: String,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct DataInfo {
+    DATA_MODE: String,
+    UNITS: String,
+    LONG_NAME: String,
+    PROFILE_PARAMETER_QC: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct DataSchema {
+    _id: String,
+    geolocation: GeoJSONPoint,
+    metadata: Vec<String>,
+    CYCLE_NUMBER: i32,
+    DIRECTION: String,
+    DATA_STATE_INDICATOR: String,
+    DATA_MODE: String,
+    DATE_CREATION: String,
+    DATE_UPDATE: String,
+    DC_REFERENCE: String,
+    JULD: f64,
+    JULD_QC: String,
+    JULD_LOCATION: f64,
+    POSITION_QC: String,
+    VERTICAL_SAMPLING_SCHEME: String,
+    CONFIG_MISSION_NUMBER: i32,
+    realtime_data: Option<HashMap<String, Vec<f64>>>,
+    adjusted_data: Option<HashMap<String, Vec<f64>>>,
+    data_info: Option<HashMap<String, DataInfo>>,
+    level_qc: Option<HashMap<String, Vec<String>>>,
+    adjusted_level_qc: Option<HashMap<String, Vec<String>>>,
+}
+
+#[get("/query_params")]
+async fn get_query_params(query_params: web::Query<serde_json::Value>) -> impl Responder {
+    let params = query_params.into_inner();
+    HttpResponse::Ok().json(params)
+}
+
+#[get("/search")]
+async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl Responder {
+    let id = query_params.get("id").unwrap().as_str().unwrap();
+
+    // Connect to MongoDB
+    let client_options = ClientOptions::parse(env::var("MONGODB_URI").unwrap()).await.unwrap();
+    let client = Client::with_options(client_options).unwrap();
+    let db = client.database("argo");
+    let collection = db.collection::<DataSchema>("argoX");
+
+    // Search for documents with matching _id
+    let filter = mongodb::bson::doc! { "_id": id };
+    let mut cursor = collection.find(filter, None).await.unwrap();
+    let mut results = Vec::new();
+
+    while let Some(result) = cursor.next().await {
+        match result {
+            Ok(document) => {
+                results.push(document);
+            },
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return HttpResponse::InternalServerError().finish();
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(results)
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let client = Client::with_uri_str("mongodb://localhost:27017").await.unwrap();
-
-    HttpServer::new(move || {
+    HttpServer::new(|| {
         App::new()
-            .data(client.clone())
-            .service(get_argo_documents)
+            .service(get_query_params)
+            .service(search_data_schema)
     })
-    .bind("127.0.0.1:8080")?
+    .bind(("0.0.0.0", 8080))?
     .run()
     .await
 }
