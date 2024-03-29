@@ -5,7 +5,8 @@ use mongodb::{Client, options::ClientOptions};
 use futures::stream::StreamExt;
 use std::env;
 use std::collections::HashMap;
-use bson::doc;
+use mongodb::bson::{self, Bson, Document};
+use mongodb::options::FindOptions;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct GeoJSONPoint {
@@ -55,17 +56,39 @@ async fn get_query_params(query_params: web::Query<serde_json::Value>) -> impl R
 
 #[get("/search")]
 async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl Responder {
-    let id = query_params.get("id").unwrap().as_str().unwrap();
+    let polygon = query_params.get("polygon").map(|p| p.as_str().unwrap());
+    let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
+    let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
 
     // Connect to MongoDB
     let client_options = ClientOptions::parse(env::var("MONGODB_URI").unwrap()).await.unwrap();
     let client = Client::with_options(client_options).unwrap();
     let db = client.database("argo");
-    let collection = db.collection::<DataSchema>("argoX");
+    let collection = db.collection::<DataSchema>("argo");
 
-    // Search for documents with matching _id
-    let filter = mongodb::bson::doc! { "_id": id };
-    let mut cursor = collection.find(filter, None).await.unwrap();
+    // Build the filter based on the provided parameters
+    let mut filter = mongodb::bson::doc! {};
+
+    if let Some(polygon) = polygon {
+        let polygon_coordinates: Vec<Vec<Vec<f64>>> = serde_json::from_str(polygon).unwrap();
+        let polygon_geojson = bson::to_bson(&json!({
+            "type": "Polygon",
+            "coordinates": polygon_coordinates
+        })).unwrap();
+        filter.insert("geolocation", mongodb::bson::doc! { "$geoWithin": { "$geometry": polygon_geojson } });
+    }
+
+    if let (Some(startDate), Some(endDate)) = (startDate, endDate) {
+        filter.insert("JULD", mongodb::bson::doc! { "$gte": startDate, "$lt": endDate });
+    } else if let Some(startDate) = startDate {
+        filter.insert("JULD", mongodb::bson::doc! { "$gte": startDate });
+    } else if let Some(endDate) = endDate {
+        filter.insert("JULD", mongodb::bson::doc! { "$lt": endDate });
+    }
+
+    // Search for documents with matching filters
+    let mut options = FindOptions::default();
+    let mut cursor = collection.find(filter, options).await.unwrap();
     let mut results = Vec::new();
 
     while let Some(result) = cursor.next().await {
