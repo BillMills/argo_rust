@@ -60,6 +60,9 @@ async fn get_query_params(query_params: web::Query<serde_json::Value>) -> impl R
 
 #[get("/search")]
 async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl Responder {
+    let page: i64 = query_params.get("page").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let page_size: i64 = 1000;
+
     let polygon = query_params.get("polygon").map(|p| p.as_str().unwrap());
     let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
     let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
@@ -86,9 +89,13 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
 
     // Search for documents with matching filters
     let mut cursor = {
+        let mut options = FindOptions::builder()
+            .sort(doc! { "JULD": -1 })
+            .skip(page * page_size)
+            .limit(page_size)
+            .build();
         let guard = CLIENT.lock().unwrap();
         let client = guard.as_ref().unwrap();
-        let mut options = FindOptions::default();
         client.database("argo").collection::<DataSchema>("argo").find(filter, options).await.unwrap()
     }; // in theory the mutex is unlocked here, holding it as little as possible
     
