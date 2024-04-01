@@ -60,12 +60,12 @@ async fn get_query_params(query_params: web::Query<serde_json::Value>) -> impl R
 
 #[get("/search")]
 async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl Responder {
-    let page: i64 = query_params.get("page").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let page: u64 = query_params.get("page").map(|d| d.as_str().unwrap().parse::<u64>().unwrap_or(0)).unwrap_or(0);
     let page_size: i64 = 1000;
 
     let polygon = query_params.get("polygon").map(|p| p.as_str().unwrap());
-    let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
-    let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
+    let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap()).unwrap();
+    let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap()).unwrap();
 
     // Build the filter based on the provided parameters
     let mut filter = mongodb::bson::doc! {};
@@ -90,8 +90,8 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
     // Search for documents with matching filters
     let mut cursor = {
         let mut options = FindOptions::builder()
-            .sort(doc! { "JULD": -1 })
-            .skip(page * page_size)
+            .sort(mongodb::bson::doc! { "JULD": -1 })
+            .skip(page * (page_size as u64))
             .limit(page_size)
             .build();
         let guard = CLIENT.lock().unwrap();
