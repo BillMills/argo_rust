@@ -217,6 +217,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
             LATITUDE = -90.0;
             LONGITUDE = 0.0;
         }
+        LONGITUDE = if LONGITUDE > 180.0 {
+            LONGITUDE - 360.0
+        } else if LONGITUDE < -180.0 {
+            LONGITUDE + 360.0
+        } else {
+            LONGITUDE
+        };
         let POSITION_QC: String = unpack_string("POSITION_QC", STRING1, [..1].into(), &file);
         let POSITIONING_SYSTEM: String = unpack_string("POSITIONING_SYSTEM", STRING8, [..1, ..8].into(), &file);
         let VERTICAL_SAMPLING_SCHEME: String = unpack_string("VERTICAL_SAMPLING_SCHEME", STRING256, [..1, ..256].into(), &file);
