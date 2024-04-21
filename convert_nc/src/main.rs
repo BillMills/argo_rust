@@ -106,6 +106,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         POSITION_QC: String,
         VERTICAL_SAMPLING_SCHEME: String,
         CONFIG_MISSION_NUMBER: i32,
+        STATION_PARAMETERS: Vec<String>,
         realtime_data: Option<HashMap<String, Vec<f64>>>,
         adjusted_data: Option<HashMap<String, Vec<f64>>>,
         data_info: Option<HashMap<String, DataInfo>>,
@@ -196,7 +197,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             N_PARAM,
             [..1, ..N_PARAM, ..namesize].into(),
             &file,
-        ); // encoded in data_info[0]
+        );
         let CYCLE_NUMBER: i32 = file.variable("CYCLE_NUMBER").map(|var| var.get_value([pindex]).unwrap_or(99999)).unwrap_or(99999);
         let DIRECTION: String = unpack_string("DIRECTION", STRING1, [..1].into(), &file);
         let DATA_CENTRE: String = unpack_string("DATA_CENTRE", STRING2, [..1, ..2].into(), &file);
@@ -384,6 +385,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             POSITION_QC: POSITION_QC,
             VERTICAL_SAMPLING_SCHEME: VERTICAL_SAMPLING_SCHEME,
             CONFIG_MISSION_NUMBER: CONFIG_MISSION_NUMBER,
+            STATION_PARAMETERS: STATION_PARAMETERS,
             realtime_data: realtime_data,
             adjusted_data: adjusted_data,
             data_info: data_info,
