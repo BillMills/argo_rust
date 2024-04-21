@@ -9,6 +9,7 @@ use mongodb::bson::{self, Bson, Document};
 use mongodb::options::FindOptions;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
+use std::clone::Clone;
 
 static CLIENT: Lazy<Mutex<Option<mongodb::Client>>> = Lazy::new(|| Mutex::new(None));
 
@@ -64,8 +65,11 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
     let page_size: i64 = 1000;
 
     let polygon = query_params.get("polygon").map(|p| p.as_str().unwrap());
-    let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap()).unwrap();
-    let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap()).unwrap();
+    let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
+    let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
+    let data: Vec<String> = query_params.get("data")
+        .map(|d| d.as_str().unwrap().split(',').map(|s| s.to_string()).collect())
+        .unwrap_or(Vec::new());
 
     // Build the filter based on the provided parameters
     let mut filter = mongodb::bson::doc! {};
@@ -103,7 +107,12 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
 
     while let Some(result) = cursor.next().await {
         match result {
-            Ok(document) => {
+            Ok(mut document) => {
+                if let Some(realtime_data) = document.realtime_data.as_ref() {
+                    if !data.is_empty() {
+                        document.realtime_data = Some(filter_hashmap(data.clone(), realtime_data.clone()));
+                    }
+                }
                 results.push(document);
             },
             Err(e) => {
@@ -136,3 +145,15 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
+fn filter_hashmap<V>(keys: Vec<String>, hashmap: HashMap<String, V>) -> HashMap<String, V>
+where
+    V: Clone,
+{
+    let mut new_hashmap = HashMap::new();
+    for key in keys {
+        if let Some(value) = hashmap.get(&key) {
+            new_hashmap.insert(key, value.clone());
+        }
+    }
+    new_hashmap
+}
