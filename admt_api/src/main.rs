@@ -66,6 +66,9 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
     let polygon = query_params.get("polygon").map(|p| p.as_str().unwrap());
     let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
     let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
+    let data: Vec<String> = query_params.get("data")
+        .map(|d| d.as_str().unwrap().split(',').map(|s| s.to_string()).collect())
+        .unwrap_or(Vec::new());
 
     // Build the filter based on the provided parameters
     let mut filter = mongodb::bson::doc! {};
@@ -85,6 +88,10 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
         filter.insert("JULD", mongodb::bson::doc! { "$gte": startDate });
     } else if let Some(endDate) = endDate {
         filter.insert("JULD", mongodb::bson::doc! { "$lt": endDate });
+    }
+
+    if !data.is_empty() {
+        filter.insert("STATION_PARAMETERS", mongodb::bson::doc! { "$in": data });
     }
 
     // Search for documents with matching filters
