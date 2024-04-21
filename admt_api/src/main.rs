@@ -45,6 +45,7 @@ struct DataSchema {
     POSITION_QC: String,
     VERTICAL_SAMPLING_SCHEME: String,
     CONFIG_MISSION_NUMBER: i32,
+    STATION_PARAMETERS: Vec<String>,
     realtime_data: Option<HashMap<String, Vec<f64>>>,
     adjusted_data: Option<HashMap<String, Vec<f64>>>,
     data_info: Option<HashMap<String, DataInfo>>,

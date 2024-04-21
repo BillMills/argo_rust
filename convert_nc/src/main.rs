@@ -68,8 +68,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
        ClientOptions::parse_with_resolver_config(&client_uri, ResolverConfig::cloudflare())
           .await?;
     let client = Client::with_options(options)?; 
-    let argo = client.database("argo").collection::<DataSchema>("argoX");
-    let argo_meta = client.database("argo").collection::<MetaSchema>("argoMetaX");
+    let argo = client.database("argo").collection::<DataSchema>("argo");
+    let argo_meta = client.database("argo").collection::<MetaSchema>("argoMeta");
 
     // structs to describe documents //////////////////////////////
 
