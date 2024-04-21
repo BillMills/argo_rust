@@ -64,8 +64,8 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
     let page_size: i64 = 1000;
 
     let polygon = query_params.get("polygon").map(|p| p.as_str().unwrap());
-    let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap()).unwrap();
-    let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap()).unwrap();
+    let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
+    let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
 
     // Build the filter based on the provided parameters
     let mut filter = mongodb::bson::doc! {};
