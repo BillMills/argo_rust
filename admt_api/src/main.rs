@@ -170,7 +170,7 @@ async fn main() -> std::io::Result<()> {
 }
 
 fn slice_vector_by_pressure_range<T: Clone>(pres_range: &[f64], pressures: &[f64], values: &[T]) -> Vec<T> {
-    if pressures.is_empty() {
+    if pressures.is_empty() || values.is_empty() {
         return Vec::new();
     }
 
@@ -180,7 +180,7 @@ fn slice_vector_by_pressure_range<T: Clone>(pres_range: &[f64], pressures: &[f64
     if start_index > end_index {
         Vec::new()
     } else {
-        values[start_index..=end_index].to_vec()
+        values[start_index..=end_index].to_vec() // panicking on slices of length 0, fix it next 
     }
 }
 
