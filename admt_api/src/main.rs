@@ -186,8 +186,6 @@ fn slice_vector_by_pressure_range<T: Clone>(pres_range: &[f64], pressures: &[f64
 
 fn apply_pressure_range<T: Clone + 'static>(data: &mut HashMap<String, Vec<T>>, pressures: &[f64], pres_range: &[f64]) {
     for (key, values) in data.iter_mut() {
-        if key != "PRES" {
-            *values = slice_vector_by_pressure_range(pres_range, pressures, values);
-        }
+        *values = slice_vector_by_pressure_range(pres_range, pressures, values);
     }
 }
