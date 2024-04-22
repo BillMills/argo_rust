@@ -70,6 +70,9 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
     let data: Vec<String> = query_params.get("data")
         .map(|d| d.as_str().unwrap().split(',').map(|s| s.to_string()).collect())
         .unwrap_or(Vec::new());
+    let pres_range: Vec<f64> = query_params.get("presRange")
+        .map(|p| p.as_str().unwrap().split(',').map(|s| s.parse::<f64>().unwrap()).collect())
+        .unwrap_or(Vec::new());
 
     // Build the filter based on the provided parameters
     let mut filter = mongodb::bson::doc! {};
@@ -111,7 +114,29 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
 
     while let Some(result) = cursor.next().await {
         match result {
-            Ok(document) => {
+            Ok(mut document) => {
+                // pressure filtering
+                if !pres_range.is_empty() {
+                    if let Some(realtime_data) = &mut document.realtime_data {
+                        if let Some(pressures) = realtime_data.get("PRES") {
+                            let pressures = pressures.clone();
+                            apply_pressure_range(realtime_data, &pressures, &pres_range);
+                            if let Some(level_qc) = &mut document.level_qc {
+                                apply_pressure_range(level_qc, &pressures, &pres_range);
+                            }
+                        }
+                    }
+                    if let Some(adjusted_data) = &mut document.adjusted_data {
+                        if let Some(pressures) = adjusted_data.get("PRES") {
+                            let pressures = pressures.clone();
+                            apply_pressure_range(adjusted_data, &pressures, &pres_range);
+                            if let Some(adjusted_level_qc) = &mut document.adjusted_level_qc {
+                                apply_pressure_range(adjusted_level_qc, &pressures, &pres_range);
+                            }
+                        }
+                    }
+                }
+                
                 results.push(document);
             },
             Err(e) => {
@@ -144,3 +169,17 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
+fn slice_vector_by_pressure_range<T: Clone>(pres_range: &[f64], pressures: &[f64], values: &[T]) -> Vec<T> {
+    let start_index = pressures.iter().position(|&p| p >= pres_range[0]).unwrap_or(0);
+    let end_index = pressures.iter().rposition(|&p| p < pres_range[1]).unwrap_or_else(|| pressures.len() - 1);
+
+    values[start_index..=end_index].to_vec()
+}
+
+fn apply_pressure_range<T: Clone + 'static>(data: &mut HashMap<String, Vec<T>>, pressures: &[f64], pres_range: &[f64]) {
+    for (key, values) in data.iter_mut() {
+        if key != "PRES" {
+            *values = slice_vector_by_pressure_range(pres_range, pressures, values);
+        }
+    }
+}
