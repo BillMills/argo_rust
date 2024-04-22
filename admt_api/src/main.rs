@@ -170,10 +170,18 @@ async fn main() -> std::io::Result<()> {
 }
 
 fn slice_vector_by_pressure_range<T: Clone>(pres_range: &[f64], pressures: &[f64], values: &[T]) -> Vec<T> {
+    if pressures.is_empty() {
+        return Vec::new();
+    }
+
     let start_index = pressures.iter().position(|&p| p >= pres_range[0]).unwrap_or(0);
     let end_index = pressures.iter().rposition(|&p| p < pres_range[1]).unwrap_or_else(|| pressures.len() - 1);
 
-    values[start_index..=end_index].to_vec()
+    if start_index > end_index {
+        Vec::new()
+    } else {
+        values[start_index..=end_index].to_vec()
+    }
 }
 
 fn apply_pressure_range<T: Clone + 'static>(data: &mut HashMap<String, Vec<T>>, pressures: &[f64], pres_range: &[f64]) {
