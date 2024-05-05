@@ -180,7 +180,7 @@ fn slice_vector_by_pressure_range<T: Clone>(pres_range: &[f64], pressures: &[f64
     if start_index > end_index {
         Vec::new()
     } else {
-        values[start_index..=end_index].to_vec() // panicking on slices of length 0, fix it next 
+        values[start_index..=end_index].to_vec()
     }
 }
 
@@ -188,4 +188,11 @@ fn apply_pressure_range<T: Clone + 'static>(data: &mut HashMap<String, Vec<T>>, 
     for (key, values) in data.iter_mut() {
         *values = slice_vector_by_pressure_range(pres_range, pressures, values);
     }
+}
+
+fn qc_filter<T: Clone>(qc_values: &[String], data: &[T], acceptable_qc: &[i32]) -> Vec<T> {
+    qc_values.iter()
+        .enumerate()
+        .filter_map(|(i, qc)| qc.parse::<i32>().ok().and_then(|qc| if acceptable_qc.contains(&qc) { Some(data[i].clone()) } else { None }))
+        .collect()
 }

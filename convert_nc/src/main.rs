@@ -133,13 +133,44 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // data unpacking /////////////////////////////////////////////
 
+    // let mut file_names: Vec<String> = Vec::new();
+    // if let Ok(entries) = fs::read_dir(data_directory.clone()) {
+    //     for entry in entries {
+    //         if let Ok(entry) = entry {
+    //             let sub_file_path = format!("{}/{}/profiles", data_directory, entry.file_name().to_str());
+    //             if let Ok(subentries) = fs::read_dir(sub_file_path.clone()) {
+    //                 for subentry in subentries {
+    //                     if let Ok(subentry) = subentry {
+    //                         if let Some(file_name) = subentry.file_name().to_str() {
+    //                             let file_path = format!("{}/{}/profiles/{}", data_directory, entry, file_name);
+    //                             file_names.push(file_path);
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
+    // for file_name in &file_names {
+    //     println!("{}", file_name);
+    // }
+
     let mut file_names: Vec<String> = Vec::new();
     if let Ok(entries) = fs::read_dir(data_directory.clone()) {
         for entry in entries {
             if let Ok(entry) = entry {
                 if let Some(file_name) = entry.file_name().to_str() {
-                    let file_path = format!("{}/{}", data_directory, file_name);
-                    file_names.push(file_path);
+                    let profile_path = format!("{}/{}/profiles", data_directory, file_name);
+                    if let Ok(profile_entries) = fs::read_dir(profile_path.clone()) {
+                        for profile_entry in profile_entries {
+                            if let Ok(profile_entry) = profile_entry {
+                                if let Some(profile_file_name) = profile_entry.file_name().to_str() {
+                                    let file_path = format!("{}/{}/profiles/{}", data_directory, file_name, profile_file_name);
+                                    file_names.push(file_path);
+                                }
+                            }
+                        }
+                    }   
                 }
             }
         }
@@ -213,7 +244,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let JULD_LOCATION: f64 = file.variable("JULD_LOCATION").map(|var| var.get_value([pindex]).unwrap_or(999999.0)).unwrap_or(999999.0);
         let mut LATITUDE: f64 = file.variable("LATITUDE").map(|var| var.get_value([pindex]).unwrap_or(99999.0)).unwrap_or(99999.0);
         let mut LONGITUDE: f64 = file.variable("LONGITUDE").map(|var| var.get_value([pindex]).unwrap_or(99999.0)).unwrap_or(99999.0);
-        if LATITUDE == 99999.0 || LONGITUDE == 99999.0 {
+        let latitude_fills = [99999.0, -99.999, -999.0];
+        let longitude_fills = [99999.0, -999.999, -999.0]; 
+        if latitude_fills.contains(&LATITUDE) || longitude_fills.contains(&LONGITUDE) || LATITUDE.is_nan() || LONGITUDE.is_nan() {
             LATITUDE = -90.0;
             LONGITUDE = 0.0;
         }
@@ -240,9 +273,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let realtime_data: Option<HashMap<String, Vec<f64>>> = STATION_PARAMETERS.iter()
             .map(|param| {
-                let variable = file.variable(param).expect(&format!("Could not find variable '{}'", param));
-                let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
-                Ok((param.clone(), data))
+                if param.is_empty() {
+                    Ok((param.clone(), vec![]))
+                } else {
+                    match file.variable(param) {
+                        Some(variable) => {
+                            let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
+                            Ok((param.clone(), data))
+                        },
+                        None => Ok((param.clone(), vec![])),
+                    }
+                }
             })
             .collect::<Result<_, Box<dyn Error>>>()
             .map(Some)
@@ -251,14 +292,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let adjusted_data: Option<HashMap<String, Vec<f64>>> = STATION_PARAMETERS.iter()
             .enumerate()
             .map(|(i, param)| {
-                let data_mode = PARAMETER_DATA_MODE.get(i).cloned().unwrap_or(DATA_MODE.clone());
-                if data_mode == "R" || param == "NB_SAMPLE_CTD" {
+                if param.is_empty() {
                     Ok((param.clone(), vec![]))
                 } else {
-                    let adjusted_variable_name = format!("{}_ADJUSTED", param);
-                    let variable = file.variable(&adjusted_variable_name).expect(&format!("Could not find variable '{}'", adjusted_variable_name));
-                    let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
-                    Ok((param.clone(), data))                    
+                    let data_mode = PARAMETER_DATA_MODE.get(i).cloned().unwrap_or(DATA_MODE.clone());
+                    if data_mode == "R" || param == "NB_SAMPLE_CTD" {
+                        Ok((param.clone(), vec![]))
+                    } else {
+                        let adjusted_variable_name = format!("{}_ADJUSTED", param);
+                        match file.variable(&adjusted_variable_name) {
+                            Some(variable) => {
+                                let data: Vec<f64> = variable.get_values([..1, ..N_LEVELS])?;
+                                Ok((param.clone(), data))
+                            },
+                            None => Ok((param.clone(), vec![])),
+                        }                    
+                    }
                 }
             })
             .collect::<Result<_, Box<dyn Error>>>()
@@ -268,25 +317,53 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let data_info: Option<HashMap<String, DataInfo>> = STATION_PARAMETERS.iter()
             .enumerate()
             .map(|(i, param)| {
-                let data_mode = PARAMETER_DATA_MODE.get(i).cloned().unwrap_or(DATA_MODE.clone());
-                let variable = file.variable(&param).expect(&format!("Could not find variable '{}'", param));
-                let units = variable.attribute_value("units").unwrap()?;
-                let long_name = variable.attribute_value("long_name").unwrap()?;
-                let qc_variable_name = format!("PROFILE_{}_QC", param);
-                let qc_value = unpack_string(&qc_variable_name, STRING1, [..1].into(), &file);
-                if let netcdf::AttributeValue::Str(u) = units {
-                    if let netcdf::AttributeValue::Str(l) = long_name {
+                if param.is_empty() {
+                    Ok((param.clone(), DataInfo {
+                        DATA_MODE: "".to_string(),
+                        UNITS: "".to_string(),
+                        LONG_NAME: "".to_string(),
+                        PROFILE_PARAMETER_QC: "".to_string(),
+                    }))
+                } else {
+                    let data_mode = PARAMETER_DATA_MODE.get(i).cloned().unwrap_or(DATA_MODE.clone());
+                    if data_mode == "R" || param == "NB_SAMPLE_CTD" {
                         Ok((param.clone(), DataInfo {
-                            DATA_MODE: data_mode,
-                            UNITS: u.to_string(),
-                            LONG_NAME: l.to_string(),
-                            PROFILE_PARAMETER_QC: qc_value,
+                            DATA_MODE: "".to_string(),
+                            UNITS: "".to_string(),
+                            LONG_NAME: "".to_string(),
+                            PROFILE_PARAMETER_QC: "".to_string(),
                         }))
                     } else {
-                        Err("Could not extract long_name attribute".into())
+                        match file.variable(param) {
+                            Some(variable) => {
+                                let data_mode = PARAMETER_DATA_MODE.get(i).cloned().unwrap_or(DATA_MODE.clone());
+                                let units = variable.attribute_value("units").unwrap()?;
+                                let long_name = variable.attribute_value("long_name").unwrap()?;
+                                let qc_variable_name = format!("PROFILE_{}_QC", param);
+                                let qc_value = unpack_string(&qc_variable_name, STRING1, [..1].into(), &file);
+                                if let netcdf::AttributeValue::Str(u) = units {
+                                    if let netcdf::AttributeValue::Str(l) = long_name {
+                                        Ok((param.clone(), DataInfo {
+                                            DATA_MODE: data_mode,
+                                            UNITS: u.to_string(),
+                                            LONG_NAME: l.to_string(),
+                                            PROFILE_PARAMETER_QC: qc_value,
+                                        }))
+                                    } else {
+                                        Err("Could not extract long_name attribute".into())
+                                    }
+                                } else {
+                                    Err("Could not extract units attribute".into())
+                                } 
+                            },
+                            None => Ok((param.clone(), DataInfo {
+                                DATA_MODE: "".to_string(),
+                                UNITS: "".to_string(),
+                                LONG_NAME: "".to_string(),
+                                PROFILE_PARAMETER_QC: "".to_string(),
+                            })),
+                        } 
                     }
-                } else {
-                    Err("Could not extract units attribute".into())
                 }
             })
             .collect::<Result<_, Box<dyn Error>>>()
@@ -295,9 +372,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
         let level_qc: Option<HashMap<String, Vec<String>>> = STATION_PARAMETERS.iter()
             .map(|param| {
-                let qc_variable_name = format!("{}_QC", param);
-                let qc_vec = unpack_string_array(&qc_variable_name, STRING1, N_LEVELS, [..1, ..N_LEVELS].into(), &file);
-                Ok((param.clone(), qc_vec))
+                if param.is_empty() {
+                    Ok((param.clone(), vec![]))
+                } else {
+                    let qc_variable_name = format!("{}_QC", param);
+                    let qc_vec = unpack_string_array(&qc_variable_name, STRING1, N_LEVELS, [..1, ..N_LEVELS].into(), &file);
+                    Ok((param.clone(), qc_vec))
+                }
             })
             .collect::<Result<_, Box<dyn Error>>>()
             .map(Some)
@@ -306,13 +387,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let adjusted_level_qc: Option<HashMap<String, Vec<String>>> = STATION_PARAMETERS.iter()
             .enumerate()
             .map(|(i, param)| {
-                let data_mode = PARAMETER_DATA_MODE.get(i).cloned().unwrap_or(DATA_MODE.clone());
-                if data_mode == "R" || param == "NB_SAMPLE_CTD" {
+                if param.is_empty() {
                     Ok((param.clone(), vec![]))
                 } else {
-                    let qc_variable_name = format!("{}_ADJUSTED_QC", param);
-                    let qc_vec = unpack_string_array(&qc_variable_name, STRING1, N_LEVELS, [..1, ..N_LEVELS].into(), &file);
-                    Ok((param.clone(), qc_vec))
+                    let data_mode = PARAMETER_DATA_MODE.get(i).cloned().unwrap_or(DATA_MODE.clone());
+                    if data_mode == "R" || param == "NB_SAMPLE_CTD" {
+                        Ok((param.clone(), vec![]))
+                    } else {
+                        let qc_variable_name = format!("{}_ADJUSTED_QC", param);
+                        let qc_vec = unpack_string_array(&qc_variable_name, STRING1, N_LEVELS, [..1, ..N_LEVELS].into(), &file);
+                        Ok((param.clone(), qc_vec))
+                    }
                 }
             })
             .collect::<Result<_, Box<dyn Error>>>()
