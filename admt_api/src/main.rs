@@ -64,15 +64,34 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
     let page: u64 = query_params.get("page").map(|d| d.as_str().unwrap().parse::<u64>().unwrap_or(0)).unwrap_or(0);
     let page_size: i64 = 1000;
 
+    // Extract the query parameters
     let polygon = query_params.get("polygon").map(|p| p.as_str().unwrap());
     let startDate = query_params.get("startDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
     let endDate = query_params.get("endDate").map(|d| d.as_str().unwrap().parse::<f64>().unwrap());
-    let data: Vec<String> = query_params.get("data")
-        .map(|d| d.as_str().unwrap().split(',').map(|s| s.to_string()).collect())
-        .unwrap_or(Vec::new());
+
+    let mut data_map: HashMap<String, Vec<i32>> = HashMap::new();
+    let mut current_key: Option<String> = None;
+    if let Some(data_str) = query_params.get("data").map(|d| d.as_str().unwrap()) {
+        for piece in data_str.split(',') {
+            match piece.parse::<i32>() {
+                Ok(num) => {
+                    if let Some(key) = &current_key {
+                        data_map.entry(key.clone()).or_insert_with(Vec::new).push(num);
+                    }
+                }
+                Err(_) => {
+                    current_key = Some(piece.to_string());
+                    data_map.entry(piece.to_string()).or_insert_with(Vec::new);
+                }
+            }
+        }
+    }
+    let data: Vec<String> = data_map.keys().cloned().collect();
+    
     let pres_range: Vec<f64> = query_params.get("presRange")
         .map(|p| p.as_str().unwrap().split(',').map(|s| s.parse::<f64>().unwrap()).collect())
         .unwrap_or(Vec::new());
+
 
     // Build the filter based on the provided parameters
     let mut filter = mongodb::bson::doc! {};
@@ -136,7 +155,38 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
                         }
                     }
                 }
-                
+
+                // qc filtering
+                for (key, qc_values) in &data_map {
+                    if !qc_values.is_empty() {
+                        if let Some(realtime_data) = &mut document.realtime_data {
+                            if let Some(level_qc) = document.level_qc.as_ref() {
+                                if let Some(level_qc_values) = level_qc.get(key) {
+                                    apply_qc_filter(realtime_data, &level_qc_values.clone(), qc_values);
+                                }
+                            }
+                        }
+                        if let Some(adjusted_data) = &mut document.adjusted_data {
+                            if let Some(adjusted_level_qc) = document.adjusted_level_qc.as_ref() {
+                                if let Some(adjusted_level_qc_values) = adjusted_level_qc.get(key) {
+                                    apply_qc_filter(adjusted_data, &adjusted_level_qc_values.clone(), qc_values);
+                                }
+                            }
+                        }
+                        if let Some(level_qc) = &mut document.level_qc {
+                            if let Some(level_qc_values) = level_qc.get(key) {
+                                apply_qc_filter(level_qc, &level_qc_values.clone(), qc_values);
+                            }
+                        }
+                        if let Some(adjusted_level_qc) = &mut document.adjusted_level_qc {
+                            if let Some(adjusted_level_qc_values) = adjusted_level_qc.get(key) {
+                                apply_qc_filter(adjusted_level_qc, &adjusted_level_qc_values.clone(), qc_values);
+                            }
+                        }
+                    }
+                }
+
+                // todo: drop the profile if it doesn't have any requested data left after filtering
                 results.push(document);
             },
             Err(e) => {
@@ -191,8 +241,18 @@ fn apply_pressure_range<T: Clone + 'static>(data: &mut HashMap<String, Vec<T>>, 
 }
 
 fn qc_filter<T: Clone>(qc_values: &[String], data: &[T], acceptable_qc: &[i32]) -> Vec<T> {
+    if data.is_empty() {
+        return Vec::new();
+    }
+
     qc_values.iter()
         .enumerate()
         .filter_map(|(i, qc)| qc.parse::<i32>().ok().and_then(|qc| if acceptable_qc.contains(&qc) { Some(data[i].clone()) } else { None }))
         .collect()
+}
+
+fn apply_qc_filter<T: Clone>(data: &mut HashMap<String, Vec<T>>, qc_data: &[String], acceptable_qc: &[i32]) {
+    for values in data.values_mut() {
+        *values = qc_filter(qc_data, values, acceptable_qc);
+    }
 }
