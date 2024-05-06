@@ -114,7 +114,7 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
     }
 
     if !data.is_empty() {
-        filter.insert("STATION_PARAMETERS", mongodb::bson::doc! { "$in": data });
+        filter.insert("STATION_PARAMETERS", mongodb::bson::doc! { "$all": data });
     }
 
     // Search for documents with matching filters
