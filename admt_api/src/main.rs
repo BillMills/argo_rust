@@ -134,28 +134,6 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
     while let Some(result) = cursor.next().await {
         match result {
             Ok(mut document) => {
-                // pressure filtering
-                if !pres_range.is_empty() {
-                    if let Some(realtime_data) = &mut document.realtime_data {
-                        if let Some(pressures) = realtime_data.get("PRES") {
-                            let pressures = pressures.clone();
-                            apply_pressure_range(realtime_data, &pressures, &pres_range);
-                            if let Some(level_qc) = &mut document.level_qc {
-                                apply_pressure_range(level_qc, &pressures, &pres_range);
-                            }
-                        }
-                    }
-                    if let Some(adjusted_data) = &mut document.adjusted_data {
-                        if let Some(pressures) = adjusted_data.get("PRES") {
-                            let pressures = pressures.clone();
-                            apply_pressure_range(adjusted_data, &pressures, &pres_range);
-                            if let Some(adjusted_level_qc) = &mut document.adjusted_level_qc {
-                                apply_pressure_range(adjusted_level_qc, &pressures, &pres_range);
-                            }
-                        }
-                    }
-                }
-
                 // qc filtering
                 for (key, qc_values) in &data_map {
                     if !qc_values.is_empty() {
@@ -186,8 +164,45 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
                     }
                 }
 
-                // todo: drop the profile if it doesn't have any requested data left after filtering
-                results.push(document);
+                // pressure filtering
+                // note you should probably do a pressure qc filter if you're going to do a pressure range filter
+                if !pres_range.is_empty() {
+                    if let Some(realtime_data) = &mut document.realtime_data {
+                        if let Some(pressures) = realtime_data.get("PRES") {
+                            let pressures = pressures.clone();
+                            apply_pressure_range(realtime_data, &pressures, &pres_range);
+                            if let Some(level_qc) = &mut document.level_qc {
+                                apply_pressure_range(level_qc, &pressures, &pres_range);
+                            }
+                        }
+                    }
+                    if let Some(adjusted_data) = &mut document.adjusted_data {
+                        if let Some(pressures) = adjusted_data.get("PRES") {
+                            let pressures = pressures.clone();
+                            apply_pressure_range(adjusted_data, &pressures, &pres_range);
+                            if let Some(adjusted_level_qc) = &mut document.adjusted_level_qc {
+                                apply_pressure_range(adjusted_level_qc, &pressures, &pres_range);
+                            }
+                        }
+                    }
+                }
+
+                // only push the document if it still has data for every requested data value after depth and qc filtering
+                let mut should_push = true;
+                for key in data_map.keys() {
+                    let realtime_data_empty = document.realtime_data.as_ref()
+                        .map_or(true, |data| data.get(key).map_or(true, Vec::is_empty));
+                    let adjusted_data_empty = document.adjusted_data.as_ref()
+                        .map_or(true, |data| data.get(key).map_or(true, Vec::is_empty));
+                
+                    if realtime_data_empty && adjusted_data_empty {
+                        should_push = false;
+                        break;
+                    }
+                }
+                if should_push {
+                    results.push(document);
+                }
             },
             Err(e) => {
                 eprintln!("Error: {}", e);
@@ -220,7 +235,7 @@ async fn main() -> std::io::Result<()> {
 }
 
 fn slice_vector_by_pressure_range<T: Clone>(pres_range: &[f64], pressures: &[f64], values: &[T]) -> Vec<T> {
-    if pressures.is_empty() || values.is_empty() {
+    if pressures.is_empty() || values.is_empty() || pres_range[0] > pressures[pressures.len() - 1] || pres_range[1] < pressures[0]{
         return Vec::new();
     }
 
