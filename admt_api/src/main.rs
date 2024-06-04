@@ -9,6 +9,7 @@ use mongodb::bson::{self, Bson, Document};
 use mongodb::options::FindOptions;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
+use rayon::prelude::*;
 
 static CLIENT: Lazy<Mutex<Option<mongodb::Client>>> = Lazy::new(|| Mutex::new(None));
 
@@ -126,92 +127,104 @@ async fn search_data_schema(query_params: web::Query<serde_json::Value>) -> impl
             .build();
         let guard = CLIENT.lock().unwrap();
         let client = guard.as_ref().unwrap();
-        client.database("argo").collection::<DataSchema>("argo").find(filter, options).await.unwrap()
+        client.database("argo").collection("argo").find(filter, options).await.unwrap()
     }; // in theory the mutex is unlocked here, holding it as little as possible
+
+    let results: Vec<Result<mongodb::bson::Document, mongodb::error::Error>> = cursor.collect().await;
+
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
+    let documents: Vec<_> = pool.install(|| {
+        results.into_par_iter()
+        .filter_map(|result| match result {
+            Ok(doc) => match mongodb::bson::from_document::<DataSchema>(doc) {
+                Ok(data_schema) => Some(data_schema),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        })
+        .collect()
+    });
     
-    let mut results = Vec::new();
-
-    while let Some(result) = cursor.next().await {
-        match result {
-            Ok(mut document) => {
-                // qc filtering
-                for (key, qc_values) in &data_map {
-                    if !qc_values.is_empty() {
-                        if let Some(realtime_data) = &mut document.realtime_data {
-                            if let Some(level_qc) = document.level_qc.as_ref() {
-                                if let Some(level_qc_values) = level_qc.get(key) {
-                                    apply_qc_filter(realtime_data, &level_qc_values.clone(), qc_values);
-                                }
-                            }
-                        }
-                        if let Some(adjusted_data) = &mut document.adjusted_data {
-                            if let Some(adjusted_level_qc) = document.adjusted_level_qc.as_ref() {
-                                if let Some(adjusted_level_qc_values) = adjusted_level_qc.get(key) {
-                                    apply_qc_filter(adjusted_data, &adjusted_level_qc_values.clone(), qc_values);
-                                }
-                            }
-                        }
-                        if let Some(level_qc) = &mut document.level_qc {
-                            if let Some(level_qc_values) = level_qc.get(key) {
-                                apply_qc_filter(level_qc, &level_qc_values.clone(), qc_values);
-                            }
-                        }
-                        if let Some(adjusted_level_qc) = &mut document.adjusted_level_qc {
-                            if let Some(adjusted_level_qc_values) = adjusted_level_qc.get(key) {
-                                apply_qc_filter(adjusted_level_qc, &adjusted_level_qc_values.clone(), qc_values);
-                            }
-                        }
-                    }
-                }
-
-                // pressure filtering
-                // note you should probably do a pressure qc filter if you're going to do a pressure range filter
-                if !pres_range.is_empty() {
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(3).build().unwrap();
+    let processed_documents: Vec<_> = pool.install(|| {
+        documents.into_par_iter()
+        .filter_map(|mut document| {
+            // qc filtering
+            for (key, qc_values) in &data_map {
+                if !qc_values.is_empty() {
                     if let Some(realtime_data) = &mut document.realtime_data {
-                        if let Some(pressures) = realtime_data.get("PRES") {
-                            let pressures = pressures.clone();
-                            apply_pressure_range(realtime_data, &pressures, &pres_range);
-                            if let Some(level_qc) = &mut document.level_qc {
-                                apply_pressure_range(level_qc, &pressures, &pres_range);
+                        if let Some(level_qc) = document.level_qc.as_ref() {
+                            if let Some(level_qc_values) = level_qc.get(key) {
+                                apply_qc_filter(realtime_data, &level_qc_values.clone(), qc_values);
                             }
                         }
                     }
                     if let Some(adjusted_data) = &mut document.adjusted_data {
-                        if let Some(pressures) = adjusted_data.get("PRES") {
-                            let pressures = pressures.clone();
-                            apply_pressure_range(adjusted_data, &pressures, &pres_range);
-                            if let Some(adjusted_level_qc) = &mut document.adjusted_level_qc {
-                                apply_pressure_range(adjusted_level_qc, &pressures, &pres_range);
+                        if let Some(adjusted_level_qc) = document.adjusted_level_qc.as_ref() {
+                            if let Some(adjusted_level_qc_values) = adjusted_level_qc.get(key) {
+                                apply_qc_filter(adjusted_data, &adjusted_level_qc_values.clone(), qc_values);
                             }
                         }
                     }
-                }
-
-                // only push the document if it still has data for every requested data value after depth and qc filtering
-                let mut should_push = true;
-                for key in data_map.keys() {
-                    let realtime_data_empty = document.realtime_data.as_ref()
-                        .map_or(true, |data| data.get(key).map_or(true, Vec::is_empty));
-                    let adjusted_data_empty = document.adjusted_data.as_ref()
-                        .map_or(true, |data| data.get(key).map_or(true, Vec::is_empty));
-                
-                    if realtime_data_empty && adjusted_data_empty {
-                        should_push = false;
-                        break;
+                    if let Some(level_qc) = &mut document.level_qc {
+                        if let Some(level_qc_values) = level_qc.get(key) {
+                            apply_qc_filter(level_qc, &level_qc_values.clone(), qc_values);
+                        }
+                    }
+                    if let Some(adjusted_level_qc) = &mut document.adjusted_level_qc {
+                        if let Some(adjusted_level_qc_values) = adjusted_level_qc.get(key) {
+                            apply_qc_filter(adjusted_level_qc, &adjusted_level_qc_values.clone(), qc_values);
+                        }
                     }
                 }
-                if should_push {
-                    results.push(document);
-                }
-            },
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                return HttpResponse::InternalServerError().finish();
             }
-        }
-    }
 
-    HttpResponse::Ok().json(results)
+            // pressure filtering
+            // note you should probably do a pressure qc filter if you're going to do a pressure range filter
+            if !pres_range.is_empty() {
+                if let Some(realtime_data) = &mut document.realtime_data {
+                    if let Some(pressures) = realtime_data.get("PRES") {
+                        let pressures = pressures.clone();
+                        apply_pressure_range(realtime_data, &pressures, &pres_range);
+                        if let Some(level_qc) = &mut document.level_qc {
+                            apply_pressure_range(level_qc, &pressures, &pres_range);
+                        }
+                    }
+                }
+                if let Some(adjusted_data) = &mut document.adjusted_data {
+                    if let Some(pressures) = adjusted_data.get("PRES") {
+                        let pressures = pressures.clone();
+                        apply_pressure_range(adjusted_data, &pressures, &pres_range);
+                        if let Some(adjusted_level_qc) = &mut document.adjusted_level_qc {
+                            apply_pressure_range(adjusted_level_qc, &pressures, &pres_range);
+                        }
+                    }
+                }
+            }
+
+            // only push the document if it still has data for every requested data value after depth and qc filtering
+            let mut should_push = true;
+            for key in data_map.keys() {
+                let realtime_data_empty = document.realtime_data.as_ref()
+                    .map_or(true, |data| data.get(key).map_or(true, Vec::is_empty));
+                let adjusted_data_empty = document.adjusted_data.as_ref()
+                    .map_or(true, |data| data.get(key).map_or(true, Vec::is_empty));
+            
+                if realtime_data_empty && adjusted_data_empty {
+                    should_push = false;
+                    break;
+                }
+            }
+            if should_push {
+                Some(document)
+            } else {
+                None
+            }
+        })
+        .collect()
+    });
+
+    HttpResponse::Ok().json(processed_documents)
 }
 
 #[actix_web::main]
