@@ -133,49 +133,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // data unpacking /////////////////////////////////////////////
 
+    // // get a list of all the files in the data directory
     // let mut file_names: Vec<String> = Vec::new();
     // if let Ok(entries) = fs::read_dir(data_directory.clone()) {
     //     for entry in entries {
     //         if let Ok(entry) = entry {
-    //             let sub_file_path = format!("{}/{}/profiles", data_directory, entry.file_name().to_str());
-    //             if let Ok(subentries) = fs::read_dir(sub_file_path.clone()) {
-    //                 for subentry in subentries {
-    //                     if let Ok(subentry) = subentry {
-    //                         if let Some(file_name) = subentry.file_name().to_str() {
-    //                             let file_path = format!("{}/{}/profiles/{}", data_directory, entry, file_name);
-    //                             file_names.push(file_path);
+    //             if let Some(file_name) = entry.file_name().to_str() {
+    //                 let profile_path = format!("{}/{}/profiles", data_directory, file_name);
+    //                 if let Ok(profile_entries) = fs::read_dir(profile_path.clone()) {
+    //                     for profile_entry in profile_entries {
+    //                         if let Ok(profile_entry) = profile_entry {
+    //                             if let Some(profile_file_name) = profile_entry.file_name().to_str() {
+    //                                 let file_path = format!("{}/{}/profiles/{}", data_directory, file_name, profile_file_name);
+    //                                 file_names.push(file_path);
+    //                             }
     //                         }
     //                     }
-    //                 }
+    //                 }   
     //             }
     //         }
     //     }
     // }
-    // for file_name in &file_names {
-    //     println!("{}", file_name);
-    // }
 
+    // use 'data_directory' as the file name for now
     let mut file_names: Vec<String> = Vec::new();
-    if let Ok(entries) = fs::read_dir(data_directory.clone()) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                if let Some(file_name) = entry.file_name().to_str() {
-                    let profile_path = format!("{}/{}/profiles", data_directory, file_name);
-                    if let Ok(profile_entries) = fs::read_dir(profile_path.clone()) {
-                        for profile_entry in profile_entries {
-                            if let Ok(profile_entry) = profile_entry {
-                                if let Some(profile_file_name) = profile_entry.file_name().to_str() {
-                                    let file_path = format!("{}/{}/profiles/{}", data_directory, file_name, profile_file_name);
-                                    file_names.push(file_path);
-                                }
-                            }
-                        }
-                    }   
-                }
-            }
-        }
-    }
-
+    file_names.push(data_directory.clone());
+    
     let mut meta_docs: Vec<MetaSchema> = Vec::new();
 
     for file_name in file_names {
